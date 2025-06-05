@@ -12,7 +12,7 @@
 
 #include <stdio.h>
 
-#define FPS 60
+#define FPS 120
 #define frame_useconds (Million(1) / FPS)
 #define frame_nseconds (Billion(1) / FPS)
 #define SLASH '/'
@@ -93,11 +93,33 @@
 #include <X11/extensions/Xfixes.h>
 #include <X11/XKBlib.h>
 #include <X11/keysym.h>
+#include <X11/Xresource.h>
 #define function static
 #undef Cursor
 
 //#include <fontconfig/fontconfig.h>
 #define internal static
+
+#undef global
+#include <wayland-client.h>
+#include "third_party/wayland/xdg_shell.h"
+#include "third_party/wayland/xdg_shell.c"
+#include "third_party/wayland/xdg_decoration.h"
+#include "third_party/wayland/xdg_decoration.c"
+#include "third_party/wayland/fractional_scale.h"
+#include "third_party/wayland/fractional_scale.c"
+#include "third_party/wayland/viewporter.h"
+#include "third_party/wayland/viewporter.c"
+#include "third_party/wayland/tablet.h"
+#include "third_party/wayland/tablet.c"
+#include "third_party/wayland/cursor_shape.h"
+#include "third_party/wayland/cursor_shape.c"
+#define global static
+
+#include <xkbcommon/xkbcommon.h>
+#include <linux/input.h>
+
+#include <wayland-egl.h>
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -159,16 +181,6 @@ struct Linux_Vars {
     Thread_Context tctx;
     Arena frame_arena;
     
-    Display* dpy;
-    Window win;
-    
-    b32 has_xfixes;
-    int xfixes_selection_event;
-    XIM xim;
-    XIC xic;
-    //FcConfig* fontconfig;
-    XkbDescPtr xkb;
-    
     Linux_Input_Chunk input;
     int xkb_event;
     int xkb_group; // active keyboard layout (0-3)
@@ -180,9 +192,7 @@ struct Linux_Vars {
     int step_timer_fd;
     u64 last_step_time;
     
-    XCursor xcursors[APP_MOUSE_CURSOR_COUNT];
     Application_Mouse_Cursor cursor;
-    XCursor hidden_cursor;
     i32 cursor_show;
     i32 prev_cursor_show;
     
@@ -207,31 +217,114 @@ struct Linux_Vars {
     Audio_Mix_Destination_Function* audio_dst_func;
     System_Thread audio_thread;
     
-    Atom atom_TARGETS;
-    Atom atom_CLIPBOARD;
-    Atom atom_UTF8_STRING;
-    Atom atom__NET_WM_STATE;
-    Atom atom__NET_WM_STATE_MAXIMIZED_HORZ;
-    Atom atom__NET_WM_STATE_MAXIMIZED_VERT;
-    Atom atom__NET_WM_STATE_FULLSCREEN;
-    Atom atom__NET_WM_PING;
-    Atom atom__NET_WM_WINDOW_TYPE;
-    Atom atom__NET_WM_WINDOW_TYPE_NORMAL;
-    Atom atom__NET_WM_PID;
-    Atom atom_WM_DELETE_WINDOW;
-    
     Log_Function *log_string;
     
     struct
     {
-        EGLDisplay display;
-        EGLContext context;
-        EGLSurface surface;
-    } egl;
+        b32 WaitingForPresent;
+        b32 GotInitialConfigure;
+        
+        f32 Scale;
+        i32 Width;
+        i32 Height;
+        i32 BufferWidth;
+        i32 BufferHeight;
+        b32 IsFullscreen;
+        
+        u32 KeyboardEnterSerial;
+        u32 LastPointerSerial;
+        u32 LastPointerEnterSerial;
+        
+        xkb_state *XKBState;
+        xkb_context *XKBContext;
+        xkb_keymap *XKBKeymap;
+        
+        int RepeatRate;
+        int RepeatDelay;
+        int RepeatHandle;
+        u32 RepeatKeyCode;
+        Input_Modifier_Set_Fixed RepeatMods;
+        
+        wl_display *Display;
+        wl_registry *Registry;
+        wl_compositor *Compositor;
+        wl_seat *Seat;
+        wl_pointer *Pointer;
+        wl_keyboard *Keyboard;
+        xdg_wm_base *Shell;
+        zxdg_decoration_manager_v1 *DecorationManager;
+        wp_fractional_scale_manager_v1  *FractionalManager;
+        wp_viewporter *Viewporter;
+        wl_data_device_manager *DataDeviceManager;
+        wp_cursor_shape_manager_v1 *CursorShapeManager;
+        
+        wl_egl_window *Window;
+        wl_surface *Surface;
+        xdg_surface *ShellSurface;
+        xdg_toplevel *ShellToplevel;
+        zxdg_toplevel_decoration_v1 *Decoration;
+        wp_fractional_scale_v1 *Fractional;
+        wp_viewport *Viewport;
+        wl_data_device *DataDevice;
+        wp_cursor_shape_device_v1 *CursorShapeDevice;
+        wl_callback *FrameCallback;
+        
+        wl_registry_listener RegistryListener;
+        wl_seat_listener SeatListener;
+        wl_pointer_listener PointerListener;
+        wl_keyboard_listener KeyboardListener;
+        xdg_wm_base_listener ShellListener;
+        xdg_surface_listener ShellSurfaceListener;
+        xdg_toplevel_listener ShellToplevelListener;
+        wp_fractional_scale_v1_listener FractionalListener;
+        wl_callback_listener FrameCallbackListener;
+        
+        wl_data_device_listener DataDeviceListener;
+        wl_data_offer_listener DataOfferListener;
+        wl_data_source_listener DataSourceListener;
+    } Wayland;
+    
+    struct
+    {
+        Display* dpy;
+        Window win;
+        
+        b32 has_xfixes;
+        int xfixes_selection_event;
+        XIM xim;
+        XIC xic;
+        //FcConfig* fontconfig;
+        XkbDescPtr xkb;
+        
+        XCursor xcursors[APP_MOUSE_CURSOR_COUNT];
+        XCursor hidden_cursor;
+        
+        Atom atom_TARGETS;
+        Atom atom_CLIPBOARD;
+        Atom atom_UTF8_STRING;
+        Atom atom__NET_WM_STATE;
+        Atom atom__NET_WM_STATE_MAXIMIZED_HORZ;
+        Atom atom__NET_WM_STATE_MAXIMIZED_VERT;
+        Atom atom__NET_WM_STATE_FULLSCREEN;
+        Atom atom__NET_WM_PING;
+        Atom atom__NET_WM_WINDOW_TYPE;
+        Atom atom__NET_WM_WINDOW_TYPE_NORMAL;
+        Atom atom__NET_WM_PID;
+        Atom atom_WM_DELETE_WINDOW;
+    } X11;
+    
+    struct
+    {
+        EGLDisplay Display;
+        EGLContext Context;
+        EGLSurface Surface;
+    } EGL;
 };
 
+global b32 GlobalRunning;
 global Linux_Vars linuxvars;
 global Render_Target render_target;
+global Key_Code keycode_lookup_table_wayland[255];
 
 ////////////////////////////
 
@@ -244,6 +337,8 @@ enum {
     EPOLL_X11_INTERNAL,
     EPOLL_CLI_PIPE,
     EPOLL_USER_TIMER,
+    EPOLL_WAYLAND,
+    EPOLL_XKB,
 };
 
 // Where per-event epoll data is not needed, .data.ptr will point to one of
@@ -255,6 +350,8 @@ internal Epoll_Kind epoll_tag_step_timer = EPOLL_STEP_TIMER;
 internal Epoll_Kind epoll_tag_x11 = EPOLL_X11;
 internal Epoll_Kind epoll_tag_x11_internal = EPOLL_X11_INTERNAL;
 internal Epoll_Kind epoll_tag_cli_pipe = EPOLL_CLI_PIPE;
+internal Epoll_Kind epoll_tag_wayland = EPOLL_WAYLAND;
+internal Epoll_Kind epoll_tag_xkb = EPOLL_XKB;
 
 ////////////////////////////
 
@@ -418,27 +515,27 @@ linux_set_wm_state(Atom one, Atom two, enum wm_state_mode mode){
     
     XEvent e = {};
     e.xany.type = ClientMessage;
-    e.xclient.message_type = linuxvars.atom__NET_WM_STATE;
+    e.xclient.message_type = linuxvars.X11.atom__NET_WM_STATE;
     e.xclient.format = 32;
-    e.xclient.window = linuxvars.win;
+    e.xclient.window = linuxvars.X11.win;
     e.xclient.data.l[0] = mode;
     e.xclient.data.l[1] = one;
     e.xclient.data.l[2] = two;
     e.xclient.data.l[3] = 1L;
     
-    XSendEvent(linuxvars.dpy,
-               RootWindow(linuxvars.dpy, 0),
+    XSendEvent(linuxvars.X11.dpy,
+               RootWindow(linuxvars.X11.dpy, 0),
                0, SubstructureNotifyMask | SubstructureRedirectMask, &e);
 }
 
 internal void
 linux_window_maximize(enum wm_state_mode mode){
-    linux_set_wm_state(linuxvars.atom__NET_WM_STATE_MAXIMIZED_HORZ, linuxvars.atom__NET_WM_STATE_MAXIMIZED_VERT, mode);
+    linux_set_wm_state(linuxvars.X11.atom__NET_WM_STATE_MAXIMIZED_HORZ, linuxvars.X11.atom__NET_WM_STATE_MAXIMIZED_VERT, mode);
 }
 
 internal void
 linux_window_fullscreen(enum wm_state_mode mode) {
-    linux_set_wm_state(linuxvars.atom__NET_WM_STATE_FULLSCREEN, 0, mode);
+    linux_set_wm_state(linuxvars.X11.atom__NET_WM_STATE_FULLSCREEN, 0, mode);
 }
 
 internal int
@@ -627,11 +724,11 @@ internal b32
 egl_init(void) {
     b32 result = false;
     
-    linuxvars.egl.display = eglGetPlatformDisplay(EGL_PLATFORM_X11_KHR, linuxvars.dpy, 0);
-    if(linuxvars.egl.display !=  EGL_NO_DISPLAY) {
+    linuxvars.EGL.Display = eglGetPlatformDisplay(EGL_PLATFORM_WAYLAND_KHR, linuxvars.Wayland.Display, 0);
+    if(linuxvars.EGL.Display !=  EGL_NO_DISPLAY) {
         int egl_maj = 0;
         int egl_min = 0;
-        if(eglInitialize(linuxvars.egl.display, &egl_maj, &egl_min) == EGL_TRUE) {
+        if(eglInitialize(linuxvars.EGL.Display, &egl_maj, &egl_min) == EGL_TRUE) {
             if((egl_maj > 1) || (egl_maj == 1 && egl_min >= 5)) {
                 eglBindAPI(EGL_OPENGL_API);
                 EGLint ContextAttributes[] = {
@@ -644,9 +741,9 @@ egl_init(void) {
                     EGL_NONE,
                 };
                 
-                linuxvars.egl.context = eglCreateContext(linuxvars.egl.display, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, ContextAttributes);
+                linuxvars.EGL.Context = eglCreateContext(linuxvars.EGL.Display, EGL_NO_CONFIG_KHR, EGL_NO_CONTEXT, ContextAttributes);
                 
-                if(linuxvars.egl.context != EGL_NO_CONTEXT) {
+                if(linuxvars.EGL.Context != EGL_NO_CONTEXT) {
                     
 #define GL_FUNC(f,R,P) f = (f##_Function *)eglGetProcAddress(#f);
 #include "opengl/4ed_opengl_funcs.h"
@@ -688,30 +785,800 @@ egl_create_surface(void) {
         EGL_RENDER_BUFFER, EGL_BACK_BUFFER,
         
         // NOTE(maria): for wayland later
-        //EGL_PRESENT_OPAQUE_EXT, EGL_TRUE,
+        EGL_PRESENT_OPAQUE_EXT, EGL_TRUE,
         
         EGL_NONE,
     };
     
     EGLint config_count = 0;
-    eglChooseConfig(linuxvars.egl.display, config_attributes, 0, 0, &config_count);
+    eglChooseConfig(linuxvars.EGL.Display, config_attributes, 0, 0, &config_count);
     
     EGLConfig *configs = push_array(scratch, EGLConfig, config_count);
-    eglChooseConfig(linuxvars.egl.display, config_attributes, configs, config_count, &config_count);
+    eglChooseConfig(linuxvars.EGL.Display, config_attributes, configs, config_count, &config_count);
     
     for(int config_index = 0;
         config_index < config_count;
         ++config_index) {
         EGLConfig test_config = configs[config_index];
-        EGLSurface test_surface = eglCreatePlatformWindowSurface(linuxvars.egl.display, test_config, &linuxvars.win, surface_attributes);
+        EGLSurface test_surface = eglCreatePlatformWindowSurface(linuxvars.EGL.Display, test_config, linuxvars.Wayland.Window, surface_attributes);
         if(test_surface != EGL_NO_SURFACE) {
-            linuxvars.egl.surface = test_surface;
+            linuxvars.EGL.Surface = test_surface;
             result = true;
             break;
         }
     }
     
     return result;
+}
+
+////////////////////////////
+
+internal String_Const_u8
+linux_filter_text(Arena* arena, u8* buf, int len) {
+    u8* const result = push_array(arena, u8, len);
+    u8* outp = result;
+    
+    for(int i = 0; i < len; ++i) {
+        u8 c = buf[i];
+        
+        if(c == '\r') {
+            *outp++ = '\n';
+        } else if(c > 127 || (' ' <= c && c <= '~') || c == '\t') {
+            *outp++ = c;
+        }
+    }
+    
+    return SCu8(result, outp - result);
+}
+
+internal void
+LinuxHandleWaylandRegistryGlobal(void *UserData, wl_registry *Registry, u32 Name,
+                                 const char *Interface, u32 Version)
+{
+    Linux_Vars *State = &linuxvars;
+    
+    if(strcmp(Interface, "wl_compositor") == 0)
+    {
+        State->Wayland.Compositor = (wl_compositor *)wl_registry_bind(Registry, Name, &wl_compositor_interface, 4);
+    }
+    if(strcmp(Interface, "wl_seat") == 0)
+    {
+        State->Wayland.Seat = (wl_seat *)wl_registry_bind(Registry, Name, &wl_seat_interface, 4);
+    }
+    else if(strcmp(Interface, "xdg_wm_base") == 0)
+    {
+        State->Wayland.Shell = (xdg_wm_base *)wl_registry_bind(Registry, Name, &xdg_wm_base_interface, 2);
+    }
+    else if(strcmp(Interface, "zxdg_decoration_manager_v1") == 0)
+    {
+        State->Wayland.DecorationManager = (zxdg_decoration_manager_v1 *)wl_registry_bind(Registry, Name, &zxdg_decoration_manager_v1_interface, 1);
+    }
+    else if(strcmp(Interface, "wp_fractional_scale_manager_v1") == 0)
+    {
+        State->Wayland.FractionalManager = (wp_fractional_scale_manager_v1 *)wl_registry_bind(Registry, Name, &wp_fractional_scale_manager_v1_interface, 1);
+    }
+    else if(strcmp(Interface, "wp_viewporter") == 0)
+    {
+        State->Wayland.Viewporter = (wp_viewporter *)wl_registry_bind(Registry, Name, &wp_viewporter_interface, 1);
+    }
+    else if(strcmp(Interface, "wl_data_device_manager") == 0)
+    {
+        State->Wayland.DataDeviceManager = (wl_data_device_manager *)wl_registry_bind(Registry, Name, &wl_data_device_manager_interface, 3);
+    }
+    else if(strcmp(Interface, "wp_cursor_shape_manager_v1") == 0)
+    {
+        State->Wayland.CursorShapeManager = (wp_cursor_shape_manager_v1 *)wl_registry_bind(Registry, Name, &wp_cursor_shape_manager_v1_interface, 1);
+    }
+}
+
+internal void
+LinuxHandleWaylandRegistryGlobalRemove(void *UserData, wl_registry *Registry, u32 Name)
+{
+}
+
+internal void
+LinuxHandleWaylandShellPing(void *UserData, xdg_wm_base *Shell, u32 Serial)
+{
+    xdg_wm_base_pong(Shell, Serial);
+}
+
+internal void
+LinuxHandleWaylandShellSurfaceConfigure(void *UserData, xdg_surface *ShellSurface, u32 Serial)
+{
+    linuxvars.Wayland.GotInitialConfigure = true;
+    xdg_surface_ack_configure(ShellSurface, Serial);
+}
+
+internal void
+LinuxHandleWaylandShellToplevelClose(void *UserData, xdg_toplevel *ShellToplevel)
+{
+    // TODO(maria): wayland
+    linuxvars.input.trans.trying_to_kill = true;
+    
+    decltype(linuxvars.Wayland) *State = &linuxvars.Wayland;
+    State->WaitingForPresent = false;
+    
+    linux_schedule_step();
+}
+
+internal void
+LinuxHandleWaylandShellToplevelConfigure(void *UserData, xdg_toplevel *ShellToplevel,
+                                         i32 Width, i32 Height, wl_array *Flags)
+{
+    decltype(linuxvars.Wayland) *State = &linuxvars.Wayland;
+    
+    if(Width > 0 &&
+       Height > 0)
+    {
+        State->Width = Width;
+        State->Height = Height;
+        State->BufferWidth = (i32)(State->Scale*State->Width+0.5f);
+        State->BufferHeight = (i32)(State->Scale*State->Height+0.5f);
+        
+        wp_viewport_set_destination(linuxvars.Wayland.Viewport, linuxvars.Wayland.Width, linuxvars.Wayland.Height);
+    }
+    
+    State->IsFullscreen = false;
+    for(u32 *Flag = (u32 *)Flags->data;
+        (u8 *)Flag < (u8 *)Flags->data + Flags->size;
+        ++Flag)
+    {
+        if(*Flag == XDG_TOPLEVEL_STATE_FULLSCREEN)
+        {
+            State->IsFullscreen = true;
+        }
+    }
+    
+    linux_schedule_step();
+}
+
+internal void
+LinuxHandleWaylandFractionalPreferredScale(void *UserData, wp_fractional_scale_v1 *Fractional, u32 Scale120)
+{
+    decltype(linuxvars.Wayland) *State = &linuxvars.Wayland;
+    State->Scale = (f32)Scale120 / 120.0f;
+    State->BufferWidth = (i32)(State->Scale*State->Width+0.5f);
+    State->BufferHeight = (i32)(State->Scale*State->Height+0.5f);
+    
+    linux_schedule_step();
+}
+
+internal void
+LinuxHandleWaylandSeatCapabilities(void *UserData, wl_seat *Seat, u32 Capabilities)
+{
+    decltype(linuxvars.Wayland) *State = &linuxvars.Wayland;
+    
+    b32 HasKeyboard = Capabilities & WL_SEAT_CAPABILITY_KEYBOARD;
+    if(HasKeyboard && !State->Keyboard)
+    {
+        State->Keyboard = wl_seat_get_keyboard(Seat);
+        wl_keyboard_add_listener(State->Keyboard, &State->KeyboardListener, 0);
+    }
+    else if(!HasKeyboard && State->Keyboard)
+    {
+        wl_keyboard_release(State->Keyboard);
+        State->Keyboard = 0;
+    }
+    
+    b32 HasPointer = Capabilities & WL_SEAT_CAPABILITY_POINTER;
+    if(HasPointer && !State->Pointer)
+    {
+        State->Pointer = wl_seat_get_pointer(Seat);
+        wl_pointer_add_listener(State->Pointer, &State->PointerListener, 0);
+        State->CursorShapeDevice = wp_cursor_shape_manager_v1_get_pointer(State->CursorShapeManager, State->Pointer);
+    }
+    else if(!HasPointer && State->Pointer)
+    {
+        wl_pointer_release(State->Pointer);
+        State->Pointer = 0;
+    }
+}
+
+internal void
+LinuxHandleWaylandSeatName(void *UserData, wl_seat *Seat, const char *Name)
+{
+}
+
+internal void
+LinuxHandleWaylandKeyboardKeymap(void *UserData, wl_keyboard *Keyboard, u32 Format,
+                                 int KeymapHandle, u32 KeymapSize)
+{
+    decltype(linuxvars.Wayland) *State = &linuxvars.Wayland;
+    
+    u8 *KeymapContents = (u8 *)mmap(0, KeymapSize, PROT_READ,
+                                    MAP_SHARED, KeymapHandle, 0);
+    
+    Assert(KeymapContents != MAP_FAILED);
+    
+    //s64 BytesRead = read(KeymapHandle, KeymapContents, KeymapSize);
+    //close(KeymapHandle);
+    
+    xkb_keymap_unref(State->XKBKeymap);
+    xkb_state_unref(State->XKBState);
+    
+    State->XKBKeymap = xkb_keymap_new_from_string(State->XKBContext, (char *)KeymapContents,
+                                                  XKB_KEYMAP_FORMAT_TEXT_V1,
+                                                  XKB_KEYMAP_COMPILE_NO_FLAGS);
+    State->XKBState = xkb_state_new(State->XKBKeymap);
+    
+    munmap(KeymapContents, KeymapSize);
+    close(KeymapHandle);
+}
+
+internal void
+LinuxHandleWaylandKeyboardEnter(void *UserData, wl_keyboard *Keyboard, u32 Serial,
+                                wl_surface *Surface, wl_array *Keys)
+{
+    decltype(linuxvars.Wayland) *State = &linuxvars.Wayland;
+    State->KeyboardEnterSerial = Serial;
+    
+    linux_schedule_step();
+}
+
+internal void
+LinuxHandleWaylandKeyboardLeave(void *UserData, wl_keyboard *Keyboard, u32 Serial,
+                                wl_surface *Surface)
+{
+    decltype(linuxvars.Wayland) *State = &linuxvars.Wayland;
+    
+    itimerspec Timer = {};
+    timerfd_settime(State->RepeatHandle, 0, &Timer, 0);
+    
+    linux_schedule_step();
+}
+
+internal void
+LinuxProcessKeyboardInputDown(u32 KeyCode, Input_Modifier_Set_Fixed *Mods)
+{
+    decltype(linuxvars.Wayland) *State = &linuxvars.Wayland;
+    
+    char Buffer[128];
+    i32 BufferFilled = xkb_state_key_get_utf8(State->XKBState, KeyCode+8, Buffer, sizeof(Buffer));
+    
+    KeyCode = keycode_lookup_table_wayland[KeyCode];
+    
+    Input_Event* key_event = NULL;
+    if(KeyCode) {
+        add_modifier(Mods, KeyCode);
+        //printf(" push key %d\n", KeyCode);
+        
+        key_event = push_input_event(&linuxvars.frame_arena, &linuxvars.input.trans.event_list);
+        key_event->kind = InputEventKind_KeyStroke;
+        key_event->key.code = KeyCode;
+        key_event->key.modifiers = copy_modifier_set(&linuxvars.frame_arena, Mods);
+        key_event->key.flags = 0;
+        
+        //printf("KeyDown: %u\n", KeyCode);
+    }
+    
+    Input_Event* text_event = NULL;
+    if(BufferFilled) {
+        String_Const_u8 str = linux_filter_text(&linuxvars.frame_arena, (u8 *)Buffer, BufferFilled);
+        if(str.size) {
+            text_event = push_input_event(&linuxvars.frame_arena, &linuxvars.input.trans.event_list);
+            text_event->kind = InputEventKind_TextInsert;
+            text_event->text.string = str;
+            //printf("TextInput: length %d: %.*s\n", (int)str.size, (int)str.size, (char *)str.str);
+        }
+    }
+    
+    if(key_event && text_event)
+    {
+        key_event->key.first_dependent_text = text_event;
+    }
+    
+    linux_schedule_step();
+}
+
+internal void
+LinuxHandleWaylandKeyboardKey(void *UserData, wl_keyboard *Keyboard, u32 Serial,
+                              u32 TimestampMS, u32 KeyCode, u32 KeyState)
+{
+    decltype(linuxvars.Wayland) *State = &linuxvars.Wayland;
+    
+    u32 OriginalKeyCode = KeyCode;
+    State->KeyboardEnterSerial = Serial;
+    
+    Input_Modifier_Set_Fixed* mods = &linuxvars.input.pers.modifiers;
+    
+    b32 Shift = xkb_state_mod_name_is_active(State->XKBState, XKB_MOD_NAME_SHIFT, XKB_STATE_MODS_EFFECTIVE) == 1;
+    b32 Control = xkb_state_mod_name_is_active(State->XKBState, XKB_MOD_NAME_CTRL, XKB_STATE_MODS_EFFECTIVE) == 1;
+    b32 Caps = xkb_state_mod_name_is_active(State->XKBState, XKB_MOD_NAME_CAPS, XKB_STATE_MODS_EFFECTIVE) == 1;
+    b32 Alt = xkb_state_mod_name_is_active(State->XKBState, XKB_MOD_NAME_ALT, XKB_STATE_MODS_EFFECTIVE) == 1;
+    
+    set_modifier(mods, KeyCode_Shift, Shift);
+    set_modifier(mods, KeyCode_Control, Control);
+    set_modifier(mods, KeyCode_CapsLock, Caps);
+    set_modifier(mods, KeyCode_Alt, Alt);
+    
+    char Buffer[128];
+    i32 BufferFilled = xkb_state_key_get_utf8(State->XKBState, KeyCode+8, Buffer, sizeof(Buffer));
+    
+    KeyCode = keycode_lookup_table_wayland[KeyCode];
+    
+    itimerspec Timer = {};
+    if(KeyState == WL_KEYBOARD_KEY_STATE_PRESSED)
+    {
+        LinuxProcessKeyboardInputDown(OriginalKeyCode, mods);
+        
+        if(State->RepeatRate > 0 && xkb_keymap_key_repeats(State->XKBKeymap, OriginalKeyCode+8))
+        {
+            State->RepeatKeyCode = OriginalKeyCode;
+            State->RepeatMods = *mods;
+            
+            Timer.it_interval.tv_sec = State->RepeatRate / 1000;
+            Timer.it_interval.tv_nsec = (State->RepeatRate % 1000) * 1000000;
+            Timer.it_value.tv_sec = State->RepeatDelay / 1000;
+            Timer.it_value.tv_nsec = (State->RepeatDelay % 1000) * 1000000;
+        }
+    }
+    else if(KeyState == WL_KEYBOARD_KEY_STATE_RELEASED)
+    {
+        Input_Event* key_event = NULL;
+        if(KeyCode) {
+            remove_modifier(mods, KeyCode);
+            key_event = push_input_event(&linuxvars.frame_arena, &linuxvars.input.trans.event_list);
+            key_event->kind = InputEventKind_KeyRelease;
+            key_event->key.code = KeyCode;
+            key_event->key.modifiers = copy_modifier_set(&linuxvars.frame_arena, mods);
+        }
+    }
+    
+    if(State->RepeatKeyCode == OriginalKeyCode)
+    {
+        timerfd_settime(State->RepeatHandle, 0, &Timer, 0);
+    }
+    
+    linux_schedule_step();
+}
+
+internal void
+LinuxHandleWaylandKeyboardModifiers(void *UserData, wl_keyboard *Keyboard, u32 Serial,
+                                    u32 ModsDepressed, u32 ModsLatched, u32 ModsLocked,
+                                    u32 Group)
+{
+    decltype(linuxvars.Wayland) *State = &linuxvars.Wayland;
+    xkb_state_update_mask(State->XKBState, ModsDepressed, ModsLocked, ModsLocked, 0, 0, Group);
+    
+    linux_schedule_step();
+}
+
+internal void
+LinuxHandleWaylandKeyboardRepeatInfo(void *UserData, wl_keyboard *Keyboard, i32 Rate, i32 Delay)
+{
+    decltype(linuxvars.Wayland) *State = &linuxvars.Wayland;
+    
+    State->RepeatRate = Rate;
+    State->RepeatDelay = Delay;
+    
+    linux_schedule_step();
+}
+
+internal void
+LinuxHandleWaylandPointerEnter(void *UserData, wl_pointer *Pointer, u32 Serial, wl_surface *Surface,
+                               wl_fixed_t SurfaceX, wl_fixed_t SurfaceY)
+{
+    decltype(linuxvars.Wayland) *State = &linuxvars.Wayland;
+    
+    u32 Shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
+    switch(linuxvars.cursor)
+    {
+        case APP_MOUSE_CURSOR_IBEAM:
+        {
+            Shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT;
+        } break;
+        
+        case APP_MOUSE_CURSOR_LEFTRIGHT:
+        {
+            Shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_EW_RESIZE;
+        } break;
+        
+        case APP_MOUSE_CURSOR_UPDOWN:
+        {
+            Shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NS_RESIZE;
+        } break;
+    }
+    
+    linuxvars.Wayland.LastPointerSerial = Serial;
+    linuxvars.Wayland.LastPointerEnterSerial = Serial;
+    wp_cursor_shape_device_v1_set_shape(State->CursorShapeDevice, Serial, Shape);
+    
+    f32 X = State->Scale*wl_fixed_to_double(SurfaceX);
+    f32 Y = State->Scale*wl_fixed_to_double(SurfaceY);
+    linuxvars.input.pers.mouse = {(i32)(X + 0.5f), (i32)(Y + 0.5f)};
+    
+    linux_schedule_step();
+}
+
+internal void
+LinuxHandleWaylandPointerLeave(void *UserData, wl_pointer *Pointer, u32 Serial, wl_surface *Surface)
+{
+    linux_schedule_step();
+}
+
+internal void
+LinuxHandleWaylandPointerMotion(void *UserData, wl_pointer *Pointer, u32 TimestampMS,
+                                wl_fixed_t SurfaceX, wl_fixed_t SurfaceY)
+{
+    decltype(linuxvars.Wayland) *State = &linuxvars.Wayland;
+    f32 X = State->Scale*wl_fixed_to_double(SurfaceX);
+    f32 Y = State->Scale*wl_fixed_to_double(SurfaceY);
+    linuxvars.input.pers.mouse = {(i32)(X + 0.5f), (i32)(Y + 0.5f)};
+    
+    linux_schedule_step();
+}
+
+internal void
+LinuxHandleWaylandPointerButton(void *UserData, wl_pointer *Pointer, u32 Serial, u32 TimestampMS,
+                                u32 Button, u32 ButtonState)
+{
+    linuxvars.Wayland.LastPointerSerial = Serial;
+    
+    b32 Pressed = ButtonState == 1;
+    
+    switch(Button)
+    {
+        case BTN_LEFT:
+        {
+            linuxvars.input.pers.mouse_l = Pressed;
+            if(Pressed)
+            {
+                linuxvars.input.trans.mouse_l_press = true;
+            }
+            else
+            {
+                linuxvars.input.trans.mouse_l_release = true;
+            }
+        } break;
+        
+        case BTN_RIGHT:
+        {
+            linuxvars.input.pers.mouse_r = Pressed;
+            if(Pressed)
+            {
+                linuxvars.input.trans.mouse_r_press = true;
+            }
+            else
+            {
+                linuxvars.input.trans.mouse_l_release = true;
+            }
+        } break;
+    }
+    
+    linux_schedule_step();
+}
+
+internal void
+LinuxHandleWaylandPointerAxis(void *UserData, wl_pointer *Pointer, u32 TimestampMS, u32 Axis,
+                              wl_fixed_t Value)
+{
+    if(Axis == 0){linuxvars.input.trans.mouse_wheel = -10*wl_fixed_to_double(Value);};
+    linux_schedule_step();
+}
+
+internal void
+LinuxHandleWaylandDataDeviceDataEnter(void *UserData, wl_data_device *DataDevice, u32 Serial,
+                                      wl_surface *Surface, wl_fixed_t SurfaceX, wl_fixed_t SurfaceY,
+                                      wl_data_offer *DataOffer)
+{
+}
+
+internal void
+LinuxHandleWaylandDataDeviceDataLeave(void *UserData, wl_data_device *DataDevice)
+{
+}
+
+internal void
+LinuxHandleWaylandDataDeviceDataMotion(void *UserData, wl_data_device *DataDevice, u32 TimestampMS,
+                                       wl_fixed_t SurfaceX, wl_fixed_t SurfaceY)
+{
+}
+
+internal void
+LinuxHandleWaylandDataDeviceDataDrop(void *UserData, wl_data_device *DataDevice)
+{
+}
+
+internal void
+LinuxHandleWaylandDataDeviceDataOffer(void *UserData, wl_data_device *DataDevice, wl_data_offer *DataOffer)
+{
+    //wl_data_offer_add_listener(DataOffer, &linuxvars.Wayland.DataOfferListener, 0);
+}
+
+internal void
+LinuxHandleWaylandDataDeviceSelection(void *UserData, wl_data_device *DataDevice, wl_data_offer *DataOffer)
+{
+    decltype(linuxvars.Wayland) *Wayland = &linuxvars.Wayland;
+    
+    if(DataOffer)
+    {
+        int ReceiveClipboardHandles[2];
+        pipe(ReceiveClipboardHandles);
+        
+        wl_data_offer_receive(DataOffer, "text/plain", ReceiveClipboardHandles[1]);
+        close(ReceiveClipboardHandles[1]);
+        wl_display_roundtrip(Wayland->Display);
+        
+        Scratch_Block scratch(&linuxvars.tctx);
+        int MaxContentsSize = 32 << 20;
+        int ContentsSize = 0;
+        u8 *Contents = push_array(scratch, u8, MaxContentsSize);
+        
+        while(true)
+        {
+            int BytesRead = read(ReceiveClipboardHandles[0], Contents + ContentsSize, sizeof(MaxContentsSize - ContentsSize));
+            if(BytesRead <= 0)
+            {
+                break;
+            }
+            
+            ContentsSize += BytesRead;
+            if(ContentsSize == MaxContentsSize)
+            {
+                // TODO(maria): handle this properly
+                break;
+            }
+        }
+        
+        linalloc_clear(&linuxvars.clipboard_arena);
+        linuxvars.clipboard_contents = push_string_copy(&linuxvars.clipboard_arena, SCu8(Contents, ContentsSize));
+        linuxvars.received_new_clipboard = true;
+        //linux_schedule_step();
+        
+        close(ReceiveClipboardHandles[0]);
+        wl_data_offer_destroy(DataOffer);
+    }
+}
+
+internal void
+LinuxHandleWaylandDataSourceTarget(void *UserData, wl_data_source *DataSource, const char *MimeType)
+{
+}
+
+internal void
+LinuxHandleWaylandDataSourceSend(void *UserData, wl_data_source *DataSource,
+                                 const char *MimeType, int FileHandle)
+{
+    if(DataSource && FileHandle >= 0)
+    {
+        write(FileHandle, linuxvars.clipboard_contents.str, linuxvars.clipboard_contents.size);
+        close(FileHandle);
+    }
+}
+
+internal void
+LinuxHandleWaylandDataSourceCancelled(void *UserData, wl_data_source *DataSource)
+{
+    wl_data_source_destroy(DataSource);
+}
+
+internal void
+LinuxHandleWaylandFrameCallbackDone(void *UserData, wl_callback *FrameCallback, u32 TimestampMS)
+{
+    linuxvars.Wayland.WaitingForPresent = false;
+    wl_callback_destroy(FrameCallback);
+}
+
+internal void
+linux_wayland_init(int argc, char** argv, Plat_Settings* settings) {
+    decltype(linuxvars.Wayland) *Wayland = &linuxvars.Wayland;
+    
+    keycode_lookup_table_wayland[KEY_A] = KeyCode_A;
+    keycode_lookup_table_wayland[KEY_B] = KeyCode_B;
+    keycode_lookup_table_wayland[KEY_C] = KeyCode_C;
+    keycode_lookup_table_wayland[KEY_D] = KeyCode_D;
+    keycode_lookup_table_wayland[KEY_E] = KeyCode_E;
+    keycode_lookup_table_wayland[KEY_F] = KeyCode_F;
+    keycode_lookup_table_wayland[KEY_G] = KeyCode_G;
+    keycode_lookup_table_wayland[KEY_H] = KeyCode_H;
+    keycode_lookup_table_wayland[KEY_I] = KeyCode_I;
+    keycode_lookup_table_wayland[KEY_J] = KeyCode_J;
+    keycode_lookup_table_wayland[KEY_K] = KeyCode_K;
+    keycode_lookup_table_wayland[KEY_L] = KeyCode_L;
+    keycode_lookup_table_wayland[KEY_M] = KeyCode_M;
+    keycode_lookup_table_wayland[KEY_N] = KeyCode_N;
+    keycode_lookup_table_wayland[KEY_O] = KeyCode_O;
+    keycode_lookup_table_wayland[KEY_P] = KeyCode_P;
+    keycode_lookup_table_wayland[KEY_Q] = KeyCode_Q;
+    keycode_lookup_table_wayland[KEY_R] = KeyCode_R;
+    keycode_lookup_table_wayland[KEY_S] = KeyCode_S;
+    keycode_lookup_table_wayland[KEY_T] = KeyCode_T;
+    keycode_lookup_table_wayland[KEY_U] = KeyCode_U;
+    keycode_lookup_table_wayland[KEY_V] = KeyCode_V;
+    keycode_lookup_table_wayland[KEY_W] = KeyCode_W;
+    keycode_lookup_table_wayland[KEY_X] = KeyCode_X;
+    keycode_lookup_table_wayland[KEY_Y] = KeyCode_Y;
+    keycode_lookup_table_wayland[KEY_Z] = KeyCode_Z;
+    
+    keycode_lookup_table_wayland[KEY_0] = KeyCode_0;
+    keycode_lookup_table_wayland[KEY_1] = KeyCode_1;
+    keycode_lookup_table_wayland[KEY_2] = KeyCode_2;
+    keycode_lookup_table_wayland[KEY_3] = KeyCode_3;
+    keycode_lookup_table_wayland[KEY_4] = KeyCode_4;
+    keycode_lookup_table_wayland[KEY_5] = KeyCode_5;
+    keycode_lookup_table_wayland[KEY_6] = KeyCode_6;
+    keycode_lookup_table_wayland[KEY_7] = KeyCode_7;
+    keycode_lookup_table_wayland[KEY_8] = KeyCode_8;
+    keycode_lookup_table_wayland[KEY_9] = KeyCode_9;
+    
+    keycode_lookup_table_wayland[KEY_SPACE] = KeyCode_Space;
+    keycode_lookup_table_wayland[KEY_GRAVE] = KeyCode_Tick;
+    keycode_lookup_table_wayland[KEY_MINUS] = KeyCode_Minus;
+    keycode_lookup_table_wayland[KEY_EQUAL] = KeyCode_Equal;
+    keycode_lookup_table_wayland[KEY_LEFTBRACE] = KeyCode_LeftBracket;
+    keycode_lookup_table_wayland[KEY_RIGHTBRACE] = KeyCode_RightBracket;
+    keycode_lookup_table_wayland[KEY_SEMICOLON] = KeyCode_Semicolon;
+    keycode_lookup_table_wayland[KEY_APOSTROPHE] = KeyCode_Quote;
+    keycode_lookup_table_wayland[KEY_COMMA] = KeyCode_Comma;
+    keycode_lookup_table_wayland[KEY_DOT] = KeyCode_Period;
+    keycode_lookup_table_wayland[KEY_COMMA] = KeyCode_Comma;
+    keycode_lookup_table_wayland[KEY_SLASH] = KeyCode_ForwardSlash;
+    keycode_lookup_table_wayland[KEY_BACKSLASH] = KeyCode_BackwardSlash;
+    
+    keycode_lookup_table_wayland[KEY_TAB] = KeyCode_Tab;
+    keycode_lookup_table_wayland[KEY_PAUSE] = KeyCode_Pause;
+    keycode_lookup_table_wayland[KEY_ESC] = KeyCode_Escape;
+    
+    keycode_lookup_table_wayland[KEY_UP] = KeyCode_Up;
+    keycode_lookup_table_wayland[KEY_DOWN] = KeyCode_Down;
+    keycode_lookup_table_wayland[KEY_LEFT] = KeyCode_Left;
+    keycode_lookup_table_wayland[KEY_RIGHT] = KeyCode_Right;
+    
+    keycode_lookup_table_wayland[KEY_BACKSPACE] = KeyCode_Backspace;
+    keycode_lookup_table_wayland[KEY_ENTER] = KeyCode_Return;
+    
+    keycode_lookup_table_wayland[KEY_DELETE] = KeyCode_Delete;
+    keycode_lookup_table_wayland[KEY_INSERT] = KeyCode_Insert;
+    keycode_lookup_table_wayland[KEY_HOME] = KeyCode_Home;
+    keycode_lookup_table_wayland[KEY_END] = KeyCode_End;
+    keycode_lookup_table_wayland[KEY_PAGEUP] = KeyCode_PageUp;
+    keycode_lookup_table_wayland[KEY_PAGEDOWN] = KeyCode_PageDown;
+    
+    keycode_lookup_table_wayland[KEY_CAPSLOCK] = KeyCode_CapsLock;
+    keycode_lookup_table_wayland[KEY_NUMLOCK] = KeyCode_NumLock;
+    keycode_lookup_table_wayland[KEY_SCROLLLOCK] = KeyCode_ScrollLock;
+    keycode_lookup_table_wayland[KEY_MENU] = KeyCode_Menu;
+    
+    keycode_lookup_table_wayland[KEY_LEFTSHIFT] = KeyCode_Shift;
+    keycode_lookup_table_wayland[KEY_RIGHTSHIFT] = KeyCode_Shift;
+    
+    keycode_lookup_table_wayland[KEY_LEFTCTRL] = KeyCode_Control;
+    keycode_lookup_table_wayland[KEY_RIGHTCTRL] = KeyCode_Control;
+    
+    keycode_lookup_table_wayland[KEY_LEFTALT] = KeyCode_Alt;
+    keycode_lookup_table_wayland[KEY_RIGHTALT] = KeyCode_Alt;
+    
+    keycode_lookup_table_wayland[KEY_F1] = KeyCode_F1;
+    keycode_lookup_table_wayland[KEY_F2] = KeyCode_F2;
+    keycode_lookup_table_wayland[KEY_F3] = KeyCode_F3;
+    keycode_lookup_table_wayland[KEY_F4] = KeyCode_F4;
+    keycode_lookup_table_wayland[KEY_F5] = KeyCode_F5;
+    keycode_lookup_table_wayland[KEY_F6] = KeyCode_F6;
+    keycode_lookup_table_wayland[KEY_F7] = KeyCode_F7;
+    keycode_lookup_table_wayland[KEY_F8] = KeyCode_F8;
+    
+    keycode_lookup_table_wayland[KEY_F9] = KeyCode_F9;
+    keycode_lookup_table_wayland[KEY_F10] = KeyCode_F10;
+    keycode_lookup_table_wayland[KEY_F11] = KeyCode_F11;
+    keycode_lookup_table_wayland[KEY_F12] = KeyCode_F12;
+    keycode_lookup_table_wayland[KEY_F13] = KeyCode_F13;
+    keycode_lookup_table_wayland[KEY_F14] = KeyCode_F14;
+    keycode_lookup_table_wayland[KEY_F15] = KeyCode_F15;
+    keycode_lookup_table_wayland[KEY_F16] = KeyCode_F16;
+    
+    keycode_lookup_table_wayland[KEY_F17] = KeyCode_F17;
+    keycode_lookup_table_wayland[KEY_F18] = KeyCode_F18;
+    keycode_lookup_table_wayland[KEY_F19] = KeyCode_F19;
+    keycode_lookup_table_wayland[KEY_F20] = KeyCode_F20;
+    keycode_lookup_table_wayland[KEY_F21] = KeyCode_F21;
+    keycode_lookup_table_wayland[KEY_F22] = KeyCode_F22;
+    keycode_lookup_table_wayland[KEY_F23] = KeyCode_F23;
+    keycode_lookup_table_wayland[KEY_F24] = KeyCode_F24;
+    
+    Wayland->Scale = 2.0f;
+    Wayland->Width = Wayland->BufferWidth = 800;
+    Wayland->Height = Wayland->BufferHeight = 600;
+    
+#undef global
+    Wayland->RegistryListener.global = LinuxHandleWaylandRegistryGlobal;
+    Wayland->RegistryListener.global_remove = LinuxHandleWaylandRegistryGlobalRemove;
+    Wayland->SeatListener.capabilities = LinuxHandleWaylandSeatCapabilities;
+    Wayland->SeatListener.name = LinuxHandleWaylandSeatName;
+    Wayland->KeyboardListener.keymap = LinuxHandleWaylandKeyboardKeymap;
+    Wayland->KeyboardListener.enter = LinuxHandleWaylandKeyboardEnter;
+    Wayland->KeyboardListener.leave = LinuxHandleWaylandKeyboardLeave;
+    Wayland->KeyboardListener.key = LinuxHandleWaylandKeyboardKey;
+    Wayland->KeyboardListener.modifiers = LinuxHandleWaylandKeyboardModifiers;
+    Wayland->KeyboardListener.repeat_info = LinuxHandleWaylandKeyboardRepeatInfo;
+    Wayland->PointerListener.enter = LinuxHandleWaylandPointerEnter;
+    Wayland->PointerListener.leave = LinuxHandleWaylandPointerLeave;
+    Wayland->PointerListener.motion = LinuxHandleWaylandPointerMotion;
+    Wayland->PointerListener.button = LinuxHandleWaylandPointerButton;
+    Wayland->PointerListener.axis = LinuxHandleWaylandPointerAxis;
+    Wayland->ShellListener.ping = LinuxHandleWaylandShellPing;
+    Wayland->ShellSurfaceListener.configure = LinuxHandleWaylandShellSurfaceConfigure;
+    Wayland->ShellToplevelListener.close = LinuxHandleWaylandShellToplevelClose;
+    Wayland->ShellToplevelListener.configure = LinuxHandleWaylandShellToplevelConfigure;
+    Wayland->FractionalListener.preferred_scale = LinuxHandleWaylandFractionalPreferredScale;
+    Wayland->DataDeviceListener.data_offer = LinuxHandleWaylandDataDeviceDataOffer;
+    Wayland->DataDeviceListener.enter = LinuxHandleWaylandDataDeviceDataEnter;
+    Wayland->DataDeviceListener.leave = LinuxHandleWaylandDataDeviceDataLeave;
+    Wayland->DataDeviceListener.motion = LinuxHandleWaylandDataDeviceDataMotion;
+    Wayland->DataDeviceListener.drop = LinuxHandleWaylandDataDeviceDataDrop;
+    Wayland->DataDeviceListener.selection = LinuxHandleWaylandDataDeviceSelection;
+    Wayland->DataSourceListener.target = LinuxHandleWaylandDataSourceTarget;
+    Wayland->DataSourceListener.send = LinuxHandleWaylandDataSourceSend;
+    Wayland->DataSourceListener.cancelled = LinuxHandleWaylandDataSourceCancelled;
+    Wayland->FrameCallbackListener.done = LinuxHandleWaylandFrameCallbackDone;
+#define global static
+    
+    Wayland->XKBContext = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+    Wayland->RepeatHandle = timerfd_create(CLOCK_MONOTONIC, TFD_CLOEXEC|TFD_NONBLOCK);
+    
+    Wayland->Display = wl_display_connect(0);
+    Wayland->Registry = wl_display_get_registry(Wayland->Display);
+    wl_registry_add_listener(Wayland->Registry, &Wayland->RegistryListener, 0);
+    
+    wl_display_roundtrip(Wayland->Display);
+    
+    wl_seat_add_listener(linuxvars.Wayland.Seat, &linuxvars.Wayland.SeatListener, 0);
+    xdg_wm_base_add_listener(linuxvars.Wayland.Shell, &linuxvars.Wayland.ShellListener, 0);
+    wl_display_roundtrip(Wayland->Display);
+    
+    Wayland->DataDevice = wl_data_device_manager_get_data_device(Wayland->DataDeviceManager, Wayland->Seat);
+    wl_data_device_add_listener(Wayland->DataDevice, &Wayland->DataDeviceListener, 0);
+    
+    Wayland->Surface = wl_compositor_create_surface(Wayland->Compositor);
+    
+    Wayland->ShellSurface = xdg_wm_base_get_xdg_surface(Wayland->Shell, Wayland->Surface);
+    xdg_surface_add_listener(Wayland->ShellSurface, &Wayland->ShellSurfaceListener, 0);
+    
+    Wayland->ShellToplevel = xdg_surface_get_toplevel(Wayland->ShellSurface);
+    xdg_toplevel_add_listener(Wayland->ShellToplevel, &Wayland->ShellToplevelListener, 0);
+    
+    xdg_toplevel_set_min_size(Wayland->ShellToplevel, 50, 50);
+    xdg_toplevel_set_title(Wayland->ShellToplevel, WINDOW_NAME);
+    xdg_toplevel_set_app_id(Wayland->ShellToplevel, "4coder");
+    
+    Wayland->Decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(Wayland->DecorationManager, Wayland->ShellToplevel);
+    zxdg_toplevel_decoration_v1_set_mode(Wayland->Decoration, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    
+    Wayland->Viewport = wp_viewporter_get_viewport(Wayland->Viewporter, Wayland->Surface);
+    wp_viewport_set_destination(Wayland->Viewport, Wayland->Width, Wayland->Height);
+    
+    Wayland->Fractional = wp_fractional_scale_manager_v1_get_fractional_scale(Wayland->FractionalManager, Wayland->Surface);
+    wp_fractional_scale_v1_add_listener(Wayland->Fractional, &Wayland->FractionalListener, 0);
+    
+    wl_surface_commit(Wayland->Surface);
+    while(!Wayland->GotInitialConfigure)
+    {
+        wl_display_dispatch(Wayland->Display);
+    }
+    
+    Wayland->Window = wl_egl_window_create(Wayland->Surface, Wayland->BufferWidth, Wayland->BufferHeight);
+    
+    // TEMP
+    render_target.width = Wayland->BufferWidth;
+    render_target.height = Wayland->BufferHeight;
+    
+    if (settings->maximize_window){
+        xdg_toplevel_set_maximized(Wayland->ShellToplevel);
+    } else if (settings->fullscreen_window){
+        xdg_toplevel_set_fullscreen(Wayland->ShellToplevel, 0);
+    }
+    
+    wl_surface_commit(Wayland->Surface);
+    
+    if (!egl_init()){
+        system_error_box("Your EGL version is too old. EGL 1.5+ is required.");
+    }
+    
+    if(!egl_create_surface()) {
+        system_error_box("Unable to create EGL surface.");
+    }
+    
+    eglMakeCurrent(linuxvars.EGL.Display, linuxvars.EGL.Surface, linuxvars.EGL.Surface, linuxvars.EGL.Context);
+    eglSwapInterval(linuxvars.EGL.Display, 0);
 }
 
 ////////////////////////////
@@ -725,9 +1592,9 @@ linux_x11_init(int argc, char** argv, Plat_Settings* settings) {
         exit(1);
     }
     
-    linuxvars.dpy = dpy;
+    linuxvars.X11.dpy = dpy;
     
-#define LOAD_ATOM(x) linuxvars.atom_##x = XInternAtom(linuxvars.dpy, #x, False);
+#define LOAD_ATOM(x) linuxvars.X11.atom_##x = XInternAtom(linuxvars.X11.dpy, #x, False);
     
     LOAD_ATOM(TARGETS);
     LOAD_ATOM(CLIPBOARD);
@@ -764,21 +1631,21 @@ linux_x11_init(int argc, char** argv, Plat_Settings* settings) {
     swa.bit_gravity = NorthWestGravity;
     
     u32 CWflags = CWBackingStore|CWBitGravity|CWBackPixel|CWBorderPixel|CWColormap|CWEventMask;
-    linuxvars.win = XCreateWindow(dpy, DefaultRootWindow(dpy), 0, 0, w, h, 0, CopyFromParent, InputOutput, CopyFromParent, CWflags, &swa);
+    linuxvars.X11.win = XCreateWindow(dpy, DefaultRootWindow(dpy), 0, 0, w, h, 0, CopyFromParent, InputOutput, CopyFromParent, CWflags, &swa);
     
-    if (!linuxvars.win){
+    if (!linuxvars.X11.win){
         system_error_box("XCreateWindow failed. Make sure your display is set up correctly.");
     }
     
     //NOTE(inso): Set the window's type to normal
-    XChangeProperty(linuxvars.dpy, linuxvars.win, linuxvars.atom__NET_WM_WINDOW_TYPE, XA_ATOM, 32, PropModeReplace, (unsigned char*)&linuxvars.atom__NET_WM_WINDOW_TYPE_NORMAL, 1);
+    XChangeProperty(linuxvars.X11.dpy, linuxvars.X11.win, linuxvars.X11.atom__NET_WM_WINDOW_TYPE, XA_ATOM, 32, PropModeReplace, (unsigned char*)&linuxvars.X11.atom__NET_WM_WINDOW_TYPE_NORMAL, 1);
     
     //NOTE(inso): window managers want the PID as a window property for some reason.
     pid_t pid = getpid();
-    XChangeProperty(linuxvars.dpy, linuxvars.win, linuxvars.atom__NET_WM_PID, XA_CARDINAL, 32, PropModeReplace, (unsigned char*)&pid, 1);
+    XChangeProperty(linuxvars.X11.dpy, linuxvars.X11.win, linuxvars.X11.atom__NET_WM_PID, XA_CARDINAL, 32, PropModeReplace, (unsigned char*)&pid, 1);
     
     //NOTE(inso): set wm properties
-    XStoreName(linuxvars.dpy, linuxvars.win, WINDOW_NAME);
+    XStoreName(linuxvars.X11.dpy, linuxvars.X11.win, WINDOW_NAME);
     
     XSizeHints *sz_hints = XAllocSizeHints();
     XWMHints   *wm_hints = XAllocWMHints();
@@ -809,54 +1676,54 @@ linux_x11_init(int argc, char** argv, Plat_Settings* settings) {
     XTextProperty win_name;
     XStringListToTextProperty(win_name_list, 1, &win_name);
     
-    XSetWMProperties(linuxvars.dpy, linuxvars.win, &win_name, NULL, argv, argc, sz_hints, wm_hints, cl_hints);
+    XSetWMProperties(linuxvars.X11.dpy, linuxvars.X11.win, &win_name, NULL, argv, argc, sz_hints, wm_hints, cl_hints);
     
     XFree(win_name.value);
     XFree(sz_hints);
     XFree(wm_hints);
     XFree(cl_hints);
     
-    linux_set_icon(linuxvars.dpy, linuxvars.win);
+    linux_set_icon(linuxvars.X11.dpy, linuxvars.X11.win);
     
     // NOTE(inso): make the window visible
-    XMapWindow(linuxvars.dpy, linuxvars.win);
+    XMapWindow(linuxvars.X11.dpy, linuxvars.X11.win);
     
     if(!egl_create_surface()) {
         system_error_box("Unable to create EGL surface.");
     }
     
-    eglMakeCurrent(linuxvars.egl.display, linuxvars.egl.surface, linuxvars.egl.surface, linuxvars.egl.context);
+    eglMakeCurrent(linuxvars.EGL.Display, linuxvars.EGL.Surface, linuxvars.EGL.Surface, linuxvars.EGL.Context);
     
-    XRaiseWindow(linuxvars.dpy, linuxvars.win);
+    XRaiseWindow(linuxvars.X11.dpy, linuxvars.X11.win);
     
     if (settings->set_window_pos){
-        XMoveWindow(linuxvars.dpy, linuxvars.win, settings->window_x, settings->window_y);
+        XMoveWindow(linuxvars.X11.dpy, linuxvars.X11.win, settings->window_x, settings->window_y);
     }
     
     if (settings->maximize_window){
-        linux_set_wm_state(linuxvars.atom__NET_WM_STATE_MAXIMIZED_HORZ, linuxvars.atom__NET_WM_STATE_MAXIMIZED_VERT, WM_STATE_ADD);
+        linux_set_wm_state(linuxvars.X11.atom__NET_WM_STATE_MAXIMIZED_HORZ, linuxvars.X11.atom__NET_WM_STATE_MAXIMIZED_VERT, WM_STATE_ADD);
     } else if (settings->fullscreen_window){
-        linux_set_wm_state(linuxvars.atom__NET_WM_STATE_FULLSCREEN, 0, WM_STATE_ADD);
+        linux_set_wm_state(linuxvars.X11.atom__NET_WM_STATE_FULLSCREEN, 0, WM_STATE_ADD);
     }
     
-    XSync(linuxvars.dpy, False);
+    XSync(linuxvars.X11.dpy, False);
     
     Atom wm_protos[] = {
-        linuxvars.atom_WM_DELETE_WINDOW,
-        linuxvars.atom__NET_WM_PING
+        linuxvars.X11.atom_WM_DELETE_WINDOW,
+        linuxvars.X11.atom__NET_WM_PING
     };
     
-    XSetWMProtocols(linuxvars.dpy, linuxvars.win, wm_protos, 2);
+    XSetWMProtocols(linuxvars.X11.dpy, linuxvars.X11.win, wm_protos, 2);
     
     // XFixes extension for clipboard notification.
     {
         int xfixes_version_unused, xfixes_err_unused;
-        Bool has_xfixes = XQueryExtension(linuxvars.dpy, "XFIXES", &xfixes_version_unused, &linuxvars.xfixes_selection_event, &xfixes_err_unused);
-        linuxvars.has_xfixes = (has_xfixes == True);
+        Bool has_xfixes = XQueryExtension(linuxvars.X11.dpy, "XFIXES", &xfixes_version_unused, &linuxvars.X11.xfixes_selection_event, &xfixes_err_unused);
+        linuxvars.X11.has_xfixes = (has_xfixes == True);
         
         // request notifications for CLIPBOARD updates.
         if(has_xfixes) {
-            XFixesSelectSelectionInput(linuxvars.dpy, linuxvars.win, linuxvars.atom_CLIPBOARD, XFixesSetSelectionOwnerNotifyMask);
+            XFixesSelectSelectionInput(linuxvars.X11.dpy, linuxvars.X11.win, linuxvars.X11.atom_CLIPBOARD, XFixesSetSelectionOwnerNotifyMask);
         }
     }
     
@@ -870,16 +1737,16 @@ linux_x11_init(int argc, char** argv, Plat_Settings* settings) {
         setlocale(LC_ALL, "C");
     }
     
-    linuxvars.xim = XOpenIM(dpy, 0, 0, 0);
-    if (!linuxvars.xim){
+    linuxvars.X11.xim = XOpenIM(dpy, 0, 0, 0);
+    if (!linuxvars.X11.xim){
         // NOTE(inso): Try falling back to the internal XIM implementation that
         // should in theory always exist.
         XSetLocaleModifiers("@im=none");
-        linuxvars.xim = XOpenIM(dpy, 0, 0, 0);
+        linuxvars.X11.xim = XOpenIM(dpy, 0, 0, 0);
     }
     
     // If it still isn't there we're screwed.
-    if (!linuxvars.xim){
+    if (!linuxvars.X11.xim){
         system_error_box("Could not initialize X Input.");
     }
     
@@ -887,7 +1754,7 @@ linux_x11_init(int argc, char** argv, Plat_Settings* settings) {
     const XIMStyle style_want = (XIMPreeditNothing | XIMStatusNothing);
     b32 found_style = false;
     
-    if (!XGetIMValues(linuxvars.xim, XNQueryInputStyle, &styles, NULL) && styles){
+    if (!XGetIMValues(linuxvars.X11.xim, XNQueryInputStyle, &styles, NULL) && styles){
         for (i32 i = 0; i < styles->count_styles; ++i){
             XIMStyle style = styles->supported_styles[i];
             if (style == style_want) {
@@ -903,18 +1770,18 @@ linux_x11_init(int argc, char** argv, Plat_Settings* settings) {
     
     XFree(styles);
     
-    linuxvars.xic = XCreateIC(linuxvars.xim,
-                              XNInputStyle, style_want,
-                              XNClientWindow, linuxvars.win,
-                              XNFocusWindow, linuxvars.win,
-                              NULL);
+    linuxvars.X11.xic = XCreateIC(linuxvars.X11.xim,
+                                  XNInputStyle, style_want,
+                                  XNClientWindow, linuxvars.X11.win,
+                                  XNFocusWindow, linuxvars.X11.win,
+                                  NULL);
     
-    if(!linuxvars.xic) {
+    if(!linuxvars.X11.xic) {
         system_error_box("Error creating X Input context.");
     }
     
     int xim_event_mask;
-    if (XGetICValues(linuxvars.xic, XNFilterEvents, &xim_event_mask, NULL)){
+    if (XGetICValues(linuxvars.X11.xic, XNFilterEvents, &xim_event_mask, NULL)){
         xim_event_mask = 0;
     }
     
@@ -928,45 +1795,45 @@ linux_x11_init(int argc, char** argv, Plat_Settings* settings) {
         | ExposureMask | VisibilityChangeMask
         | xim_event_mask;
     
-    XSelectInput(linuxvars.dpy, linuxvars.win, event_mask);
+    XSelectInput(linuxvars.X11.dpy, linuxvars.X11.win, event_mask);
     
     // init XKB keyboard extension
     
-    if(!XkbQueryExtension(linuxvars.dpy, 0, &linuxvars.xkb_event, 0, 0, 0)) {
+    if(!XkbQueryExtension(linuxvars.X11.dpy, 0, &linuxvars.xkb_event, 0, 0, 0)) {
         system_error_box("XKB Extension not available.");
     }
     
-    XkbSelectEvents(linuxvars.dpy, XkbUseCoreKbd, XkbAllEventsMask, XkbAllEventsMask);
-    linuxvars.xkb = XkbGetMap(linuxvars.dpy, XkbKeyTypesMask | XkbKeySymsMask, XkbUseCoreKbd);
-    if(!linuxvars.xkb) {
+    XkbSelectEvents(linuxvars.X11.dpy, XkbUseCoreKbd, XkbAllEventsMask, XkbAllEventsMask);
+    linuxvars.X11.xkb = XkbGetMap(linuxvars.X11.dpy, XkbKeyTypesMask | XkbKeySymsMask, XkbUseCoreKbd);
+    if(!linuxvars.X11.xkb) {
         system_error_box("Error getting XKB keyboard map.");
     }
     
-    if(XkbGetNames(linuxvars.dpy, XkbKeyNamesMask, linuxvars.xkb) != Success) {
+    if(XkbGetNames(linuxvars.X11.dpy, XkbKeyNamesMask, linuxvars.X11.xkb) != Success) {
         system_error_box("Error getting XKB key names.");
     }
     
     // closer to windows behaviour (holding key doesn't generate release events)
-    XkbSetDetectableAutoRepeat(linuxvars.dpy, True, NULL);
+    XkbSetDetectableAutoRepeat(linuxvars.X11.dpy, True, NULL);
     
     XCursor cursors[APP_MOUSE_CURSOR_COUNT] = {
         None,
         None,
-        XCreateFontCursor(linuxvars.dpy, XC_xterm),
-        XCreateFontCursor(linuxvars.dpy, XC_sb_h_double_arrow),
-        XCreateFontCursor(linuxvars.dpy, XC_sb_v_double_arrow)
+        XCreateFontCursor(linuxvars.X11.dpy, XC_xterm),
+        XCreateFontCursor(linuxvars.X11.dpy, XC_sb_h_double_arrow),
+        XCreateFontCursor(linuxvars.X11.dpy, XC_sb_v_double_arrow)
     };
-    block_copy(linuxvars.xcursors, cursors, sizeof(cursors));
+    block_copy(linuxvars.X11.xcursors, cursors, sizeof(cursors));
     
     // sneaky invisible cursor
     {
         char data = 0;
         XColor c  = {};
-        Pixmap p  = XCreateBitmapFromData(linuxvars.dpy, linuxvars.win, &data, 1, 1);
+        Pixmap p  = XCreateBitmapFromData(linuxvars.X11.dpy, linuxvars.X11.win, &data, 1, 1);
         
-        linuxvars.hidden_cursor = XCreatePixmapCursor(linuxvars.dpy, p, p, &c, &c, 0, 0);
+        linuxvars.X11.hidden_cursor = XCreatePixmapCursor(linuxvars.X11.dpy, p, p, &c, &c, 0, 0);
         
-        XFreePixmap(linuxvars.dpy, p);
+        XFreePixmap(linuxvars.X11.dpy, p);
     }
 }
 
@@ -1036,7 +1903,7 @@ linux_keycode_init_common(Display* dpy, Key_Code* keycode_lookup_table, SymCode*
         KeySym sym = NoSymbol;
         
         // lookup key in current layout with no modifiers held (0)
-        if(!XkbTranslateKeyCode(linuxvars.xkb, i, XkbBuildCoreState(0, linuxvars.xkb_group), NULL, &sym)) {
+        if(!XkbTranslateKeyCode(linuxvars.X11.xkb, i, XkbBuildCoreState(0, linuxvars.xkb_group), NULL, &sym)) {
             continue;
         }
         
@@ -1056,7 +1923,7 @@ linux_keycode_init_common(Display* dpy, Key_Code* keycode_lookup_table, SymCode*
         // nothing found - try with shift held (needed for e.g. belgian numbers to bind).
         KeySym shift_sym = NoSymbol;
         
-        if(!XkbTranslateKeyCode(linuxvars.xkb, i, XkbBuildCoreState(ShiftMask, linuxvars.xkb_group), NULL, &shift_sym)) {
+        if(!XkbTranslateKeyCode(linuxvars.X11.xkb, i, XkbBuildCoreState(ShiftMask, linuxvars.xkb_group), NULL, &shift_sym)) {
             continue;
         }
         
@@ -1132,7 +1999,7 @@ linux_keycode_init_physical(Display* dpy, Key_Code* keycode_lookup_table){
     static const int nrows = 4;
     
     for(int i = XkbMinLegalKeyCode; i <= XkbMaxLegalKeyCode; ++i) {
-        const char* name = linuxvars.xkb->names->keys[i].name;
+        const char* name = linuxvars.X11.xkb->names->keys[i].name;
         
         // alphanumeric keys
         
@@ -1186,13 +2053,20 @@ linux_epoll_init(void) {
     linuxvars.step_timer_fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
     linuxvars.epoll = epoll_create(16);
     
-    e.data.ptr = &epoll_tag_x11;
-    epoll_ctl(linuxvars.epoll, EPOLL_CTL_ADD, ConnectionNumber(linuxvars.dpy), &e);
+    //e.data.ptr = & epoll_tag_x11;
+    //epoll_ctl(linuxvars.epoll, EPOLL_CTL_ADD, ConnectionNumber(linuxvars.X11.dpy), &e);
+    
+    e.data.ptr = & epoll_tag_xkb;
+    epoll_ctl(linuxvars.epoll, EPOLL_CTL_ADD, linuxvars.Wayland.RepeatHandle, &e);
+    
+    e.data.ptr = & epoll_tag_wayland;
+    epoll_ctl(linuxvars.epoll, EPOLL_CTL_ADD, wl_display_get_fd(linuxvars.Wayland.Display), &e);
     
     e.data.ptr = &epoll_tag_step_timer;
     epoll_ctl(linuxvars.epoll, EPOLL_CTL_ADD, linuxvars.step_timer_fd, &e);
 }
 
+#if 0
 internal void
 linux_clipboard_send(XSelectionRequestEvent* req) {
     
@@ -1205,7 +2079,7 @@ linux_clipboard_send(XSelectionRequestEvent* req) {
     rsp.property = None;
     
     Atom formats[] = {
-        linuxvars.atom_UTF8_STRING,
+        linuxvars.X11.atom_UTF8_STRING,
         XA_STRING,
     };
     
@@ -1213,11 +2087,11 @@ linux_clipboard_send(XSelectionRequestEvent* req) {
         goto done;
     }
     
-    if(req->selection != linuxvars.atom_CLIPBOARD || req->property == None) {
+    if(req->selection != linuxvars.X11.atom_CLIPBOARD || req->property == None) {
         goto done;
     }
     
-    if (req->target == linuxvars.atom_TARGETS){
+    if (req->target == linuxvars.X11.atom_TARGETS){
         
         XChangeProperty(
                         req->display,
@@ -1268,11 +2142,11 @@ linux_clipboard_recv(Arena *arena){
     unsigned long bytes_left;
     u8 *data;
     
-    int result = XGetWindowProperty(linuxvars.dpy,
-                                    linuxvars.win,
-                                    linuxvars.atom_CLIPBOARD,
+    int result = XGetWindowProperty(linuxvars.X11.dpy,
+                                    linuxvars.X11.win,
+                                    linuxvars.X11.atom_CLIPBOARD,
                                     0L, 0x20000000L, False,
-                                    linuxvars.atom_UTF8_STRING,
+                                    linuxvars.X11.atom_UTF8_STRING,
                                     &type, &fmt, &nitems,
                                     &bytes_left, &data);
     
@@ -1280,7 +2154,7 @@ linux_clipboard_recv(Arena *arena){
     if(result == Success && fmt == 8){
         clip= push_string_copy(arena, SCu8(data, nitems));
         XFree(data);
-        XDeleteProperty(linuxvars.dpy, linuxvars.win, linuxvars.atom_CLIPBOARD);
+        XDeleteProperty(linuxvars.X11.dpy, linuxvars.X11.win, linuxvars.X11.atom_CLIPBOARD);
     }
     
     return(clip);
@@ -1289,8 +2163,8 @@ linux_clipboard_recv(Arena *arena){
 internal void
 linux_clipboard_recv(XSelectionEvent* ev) {
     
-    if(ev->selection != linuxvars.atom_CLIPBOARD ||
-       ev->target != linuxvars.atom_UTF8_STRING ||
+    if(ev->selection != linuxvars.X11.atom_CLIPBOARD ||
+       ev->target != linuxvars.X11.atom_UTF8_STRING ||
        ev->property == None) {
         return;
     }
@@ -1317,8 +2191,33 @@ system_post_clipboard(String_Const_u8 str, i32 index){
     //LINUX_FN_DEBUG("%.*s", string_expand(str));
     linalloc_clear(&linuxvars.clipboard_arena);
     linuxvars.clipboard_contents = push_u8_stringf(&linuxvars.clipboard_arena, "%.*s", string_expand(str));
-    XSetSelectionOwner(linuxvars.dpy, linuxvars.atom_CLIPBOARD, linuxvars.win, CurrentTime);
+    XSetSelectionOwner(linuxvars.X11.dpy, linuxvars.X11.atom_CLIPBOARD, linuxvars.X11.win, CurrentTime);
 }
+#else
+internal
+system_get_clipboard_sig(){
+    // TODO(inso): index?
+    return(push_string_copy(arena, linuxvars.clipboard_contents));
+}
+
+internal void
+system_post_clipboard(String_Const_u8 str, i32 index){
+    // TODO(inso): index?
+    linalloc_clear(&linuxvars.clipboard_arena);
+    linuxvars.clipboard_contents = push_u8_stringf(&linuxvars.clipboard_arena, "%.*s", string_expand(str));
+    
+    decltype(linuxvars.Wayland) *Wayland = &linuxvars.Wayland;
+    
+    wl_data_source *DataSource = wl_data_device_manager_create_data_source(Wayland->DataDeviceManager);
+    wl_data_source_add_listener(DataSource, &Wayland->DataSourceListener, 0);
+    wl_data_source_offer(DataSource, "text/plain");
+    wl_data_source_offer(DataSource, "text/plain;charset=utf-8");
+    wl_data_source_offer(DataSource, "TEXT");
+    wl_data_source_offer(DataSource, "STRING");
+    wl_data_source_offer(DataSource, "UTF8_STRING");
+    wl_data_device_set_selection(Wayland->DataDevice, DataSource, Wayland->KeyboardEnterSerial);
+}
+#endif
 
 internal void
 system_set_clipboard_catch_all(b32 enabled){
@@ -1329,24 +2228,6 @@ system_set_clipboard_catch_all(b32 enabled){
 internal b32
 system_get_clipboard_catch_all(void){
     return linuxvars.clipboard_catch_all;
-}
-
-internal String_Const_u8
-linux_filter_text(Arena* arena, u8* buf, int len) {
-    u8* const result = push_array(arena, u8, len);
-    u8* outp = result;
-    
-    for(int i = 0; i < len; ++i) {
-        u8 c = buf[i];
-        
-        if(c == '\r') {
-            *outp++ = '\n';
-        } else if(c > 127 || (' ' <= c && c <= '~') || c == '\t') {
-            *outp++ = c;
-        }
-    }
-    
-    return SCu8(result, outp - result);
 }
 
 internal KeyCode
@@ -1381,9 +2262,9 @@ linux_handle_x11_events() {
     static XEvent prev_event = {};
     b32 should_step = false;
     
-    while (XPending(linuxvars.dpy)) {
+    while (XPending(linuxvars.X11.dpy)) {
         XEvent event;
-        XNextEvent(linuxvars.dpy, &event);
+        XNextEvent(linuxvars.X11.dpy, &event);
         
         b32 filtered = false;
         if (XFilterEvent(&event, None) == True){
@@ -1413,11 +2294,11 @@ linux_handle_x11_events() {
                 KeySym keysym = NoSymbol;
                 u8 buf[256] = {};
                 
-                int len = Xutf8LookupString(linuxvars.xic, &event.xkey, (char*)buf, sizeof(buf) - 1, &keysym, &status);
+                int len = Xutf8LookupString(linuxvars.X11.xic, &event.xkey, (char*)buf, sizeof(buf) - 1, &keysym, &status);
                 
                 if (status == XBufferOverflow){
-                    Xutf8ResetIC(linuxvars.xic);
-                    XSetICFocus(linuxvars.xic);
+                    Xutf8ResetIC(linuxvars.X11.xic);
+                    XSetICFocus(linuxvars.X11.xic);
                 }
                 
                 if (keysym == XK_ISO_Left_Tab){
@@ -1534,8 +2415,8 @@ linux_handle_x11_events() {
                         // NOTE(inso): improves selection dragging (especially in notepad-like mode).
                         // we will still get mouse events when the pointer leaves the window if it's dragging.
                         XGrabPointer(
-                                     linuxvars.dpy,
-                                     linuxvars.win,
+                                     linuxvars.X11.dpy,
+                                     linuxvars.X11.win,
                                      True, PointerMotionMask | ButtonPressMask | ButtonReleaseMask,
                                      GrabModeAsync, GrabModeAsync,
                                      None, None, CurrentTime);
@@ -1564,7 +2445,7 @@ linux_handle_x11_events() {
                         linuxvars.input.trans.mouse_l_release = true;
                         linuxvars.input.pers.mouse_l = false;
                         
-                        XUngrabPointer(linuxvars.dpy, CurrentTime);
+                        XUngrabPointer(linuxvars.X11.dpy, CurrentTime);
                     } break;
                     
                     case Button3: {
@@ -1604,15 +2485,15 @@ linux_handle_x11_events() {
                 Atom atom = event.xclient.data.l[0];
                 
                 // Window X button clicked
-                if(atom == linuxvars.atom_WM_DELETE_WINDOW) {
+                if(atom == linuxvars.X11.atom_WM_DELETE_WINDOW) {
                     should_step = true;
                     linuxvars.input.trans.trying_to_kill = true;
                 }
                 
                 // Notify WM that we're still responding (don't grey our window out).
-                else if(atom == linuxvars.atom__NET_WM_PING) {
-                    event.xclient.window = DefaultRootWindow(linuxvars.dpy);
-                    XSendEvent(linuxvars.dpy,
+                else if(atom == linuxvars.X11.atom__NET_WM_PING) {
+                    event.xclient.window = DefaultRootWindow(linuxvars.X11.dpy);
+                    XSendEvent(linuxvars.X11.dpy,
                                event.xclient.window,
                                False,
                                SubstructureRedirectMask | SubstructureNotifyMask,
@@ -1621,15 +2502,15 @@ linux_handle_x11_events() {
             } break;
             
             case SelectionRequest: {
-                linux_clipboard_send((XSelectionRequestEvent*)&event);
+                //linux_clipboard_send((XSelectionRequestEvent*)&event);
             } break;
             
             case SelectionNotify: {
-                linux_clipboard_recv((XSelectionEvent*)&event);
+                //linux_clipboard_recv((XSelectionEvent*)&event);
             } break;
             
             case SelectionClear: {
-                if(event.xselectionclear.selection == linuxvars.atom_CLIPBOARD) {
+                if(event.xselectionclear.selection == linuxvars.X11.atom_CLIPBOARD) {
                     linalloc_clear(&linuxvars.clipboard_arena);
                     block_zero_struct(&linuxvars.clipboard_contents);
                 }
@@ -1642,14 +2523,14 @@ linux_handle_x11_events() {
             
             default: {
                 // clipboard update notification - ask for the new content
-                if (event.type == linuxvars.xfixes_selection_event) {
+                if (event.type == linuxvars.X11.xfixes_selection_event) {
                     XFixesSelectionNotifyEvent* sne = (XFixesSelectionNotifyEvent*)&event;
-                    if (sne->subtype == XFixesSelectionNotify && sne->owner != linuxvars.win){
-                        XConvertSelection(linuxvars.dpy,
-                                          linuxvars.atom_CLIPBOARD,
-                                          linuxvars.atom_UTF8_STRING,
-                                          linuxvars.atom_CLIPBOARD,
-                                          linuxvars.win,
+                    if (sne->subtype == XFixesSelectionNotify && sne->owner != linuxvars.X11.win){
+                        XConvertSelection(linuxvars.X11.dpy,
+                                          linuxvars.X11.atom_CLIPBOARD,
+                                          linuxvars.X11.atom_UTF8_STRING,
+                                          linuxvars.X11.atom_CLIPBOARD,
+                                          linuxvars.X11.win,
                                           CurrentTime);
                     }
                 }
@@ -1661,7 +2542,7 @@ linux_handle_x11_events() {
                     if(kb->any.xkb_type == XkbStateNotify && kb->state.group != linuxvars.xkb_group) {
                         linuxvars.xkb_group = kb->state.group;
                         XkbRefreshKeyboardMapping((XkbMapNotifyEvent*)kb);
-                        linux_keycode_init(linuxvars.dpy);
+                        linux_keycode_init(linuxvars.X11.dpy);
                     }
                 }
             } break;
@@ -1677,13 +2558,35 @@ internal b32
 linux_epoll_process(struct epoll_event* events, int num_events) {
     b32 do_step = false;
     
+    b32 GotWayland = false;
+    
     for (int i = 0; i < num_events; ++i){
         struct epoll_event* ev = events + i;
         Epoll_Kind* tag = (Epoll_Kind*)ev->data.ptr;
         
         switch (*tag){
             case EPOLL_X11: {
-                linux_handle_x11_events();
+                //linux_handle_x11_events();
+            } break;
+            
+            case EPOLL_WAYLAND:
+            {
+                wl_display_read_events(linuxvars.Wayland.Display);
+                GotWayland = true;
+            } break;
+            
+            case EPOLL_XKB:
+            {
+                u64 RepeatCount = 0;
+                if(read(linuxvars.Wayland.RepeatHandle, &RepeatCount, sizeof(RepeatCount)) == 8)
+                {
+                    for(u64 RepeatIndex = 0;
+                        RepeatIndex < RepeatCount;
+                        ++RepeatIndex)
+                    {
+                        LinuxProcessKeyboardInputDown(linuxvars.Wayland.RepeatKeyCode, &linuxvars.Wayland.RepeatMods);
+                    }
+                }
             } break;
             
             case EPOLL_X11_INTERNAL: {
@@ -1710,6 +2613,11 @@ linux_epoll_process(struct epoll_event* events, int num_events) {
                 linux_schedule_step();
             } break;
         }
+    }
+    
+    if(!GotWayland)
+    {
+        wl_display_cancel_read(linuxvars.Wayland.Display);
     }
     
     return do_step;
@@ -1885,10 +2793,14 @@ main(int argc, char **argv){
         }
     }
     
-    linux_x11_init(argc, argv, &plat_settings);
-    linux_keycode_init(linuxvars.dpy);
+    //linux_x11_init(argc, argv, &plat_settings);
+    //linux_keycode_init(linuxvars.X11.dpy);
+    
+    linux_wayland_init(argc, argv, &plat_settings);
+    
     linux_epoll_init();
     
+    GlobalRunning = true;
     linuxvars.audio_thread = system_thread_launch(&linux_audio_main, NULL);
     
     
@@ -1906,101 +2818,164 @@ main(int argc, char **argv){
     b32 first_step = true;
     u64 timer_start = system_now_time();
     
-    for (;;) {
+    while (GlobalRunning) {
         
-        if (XEventsQueued(linuxvars.dpy, QueuedAlready)){
+#if 0
+        if (XEventsQueued(linuxvars.X11.dpy, QueuedAlready)){
             linux_handle_x11_events();
         }
+#endif
         
+#if 0
+        if(PollHandles[0].revents & POLLIN)
+        {
+            
+        }
+#endif
         system_mutex_release(linuxvars.global_frame_mutex);
         
-        struct epoll_event events[16];
-        int num_events = epoll_wait(linuxvars.epoll, events, ArrayCount(events), -1);
+        if(!first_step)
+        {
+            while(wl_display_prepare_read(linuxvars.Wayland.Display))
+            {
+                wl_display_dispatch_pending(linuxvars.Wayland.Display);
+            }
+            wl_display_flush(linuxvars.Wayland.Display);
+            
+            struct epoll_event events[16];
+            int num_events = epoll_wait(linuxvars.epoll, events, ArrayCount(events), -1);
+            
+            if (num_events == -1){
+                if (errno != EINTR){
+                    perror("epoll_wait");
+                    //LOG("epoll_wait\n");
+                }
+                continue;
+            }
+            
+            if(!linux_epoll_process(events, num_events)) {
+                continue;
+            }
+        }
         
         system_mutex_acquire(linuxvars.global_frame_mutex);
         
-        if (num_events == -1){
-            if (errno != EINTR){
-                perror("epoll_wait");
-                //LOG("epoll_wait\n");
+        wl_display_dispatch_pending(linuxvars.Wayland.Display);
+        
+        //if(!linuxvars.Wayland.WaitingForPresent)
+        {
+            wl_egl_window_resize(linuxvars.Wayland.Window, linuxvars.Wayland.BufferWidth, linuxvars.Wayland.BufferHeight, 0, 0);
+            
+            linuxvars.last_step_time = system_now_time();
+            
+#if 0
+            // NOTE(allen): Frame Clipboard Input
+            // Request clipboard contents from X11 on first step, or every step if they don't have XFixes notification ability.
+            if (first_step || (!linuxvars.X11.has_xfixes && linuxvars.clipboard_catch_all)){
+                XConvertSelection(linuxvars.X11.dpy, linuxvars.X11.atom_CLIPBOARD, linuxvars.X11.atom_UTF8_STRING, linuxvars.X11.atom_CLIPBOARD, linuxvars.X11.win, CurrentTime);
             }
-            continue;
-        }
-        
-        if(!linux_epoll_process(events, num_events)) {
-            continue;
-        }
-        
-        linuxvars.last_step_time = system_now_time();
-        
-        // NOTE(allen): Frame Clipboard Input
-        // Request clipboard contents from X11 on first step, or every step if they don't have XFixes notification ability.
-        if (first_step || (!linuxvars.has_xfixes && linuxvars.clipboard_catch_all)){
-            XConvertSelection(linuxvars.dpy, linuxvars.atom_CLIPBOARD, linuxvars.atom_UTF8_STRING, linuxvars.atom_CLIPBOARD, linuxvars.win, CurrentTime);
-        }
-        
-        Application_Step_Input input = {};
-        
-        if (linuxvars.received_new_clipboard && linuxvars.clipboard_catch_all){
-            input.clipboard = linuxvars.clipboard_contents;
-        }
-        linuxvars.received_new_clipboard = false;
-        
-        input.first_step = first_step;
-        input.dt = frame_useconds/1000000.f; // variable?
-        input.events = linuxvars.input.trans.event_list;
-        input.trying_to_kill = linuxvars.input.trans.trying_to_kill;
-        
-        input.mouse.out_of_window = linuxvars.input.pers.mouse_out_of_window;
-        input.mouse.p = linuxvars.input.pers.mouse;
-        input.mouse.l = linuxvars.input.pers.mouse_l;
-        input.mouse.r = linuxvars.input.pers.mouse_r;
-        input.mouse.press_l = linuxvars.input.trans.mouse_l_press;
-        input.mouse.release_l = linuxvars.input.trans.mouse_l_release;
-        input.mouse.press_r = linuxvars.input.trans.mouse_r_press;
-        input.mouse.release_r = linuxvars.input.trans.mouse_r_release;
-        input.mouse.wheel = linuxvars.input.trans.mouse_wheel;
-        
-        // NOTE(allen): Application Core Update
-        Application_Step_Result result = {};
-        if (app.step != 0){
-            result = app.step(&linuxvars.tctx, &render_target, base_ptr, &input);
-        }
-        
-        // NOTE(allen): Finish the Loop
-        if (result.perform_kill){
-            break;
-        }
-        
-        // NOTE(NAME): Switch to New Title
-        if (result.has_new_title){
-            XStoreName(linuxvars.dpy, linuxvars.win, result.title_string);
-        }
-        
-        // NOTE(allen): Switch to New Cursor
-        if (result.mouse_cursor_type != linuxvars.cursor && !linuxvars.input.pers.mouse_l){
-            XCursor c = linuxvars.xcursors[result.mouse_cursor_type];
-            if (linuxvars.cursor_show){
-                XDefineCursor(linuxvars.dpy, linuxvars.win, c);
+#endif
+            render_target.width = linuxvars.Wayland.BufferWidth;
+            render_target.height = linuxvars.Wayland.BufferHeight;
+            
+            Application_Step_Input input = {};
+            
+            if (linuxvars.received_new_clipboard && linuxvars.clipboard_catch_all){
+                input.clipboard = linuxvars.clipboard_contents;
             }
-            linuxvars.cursor = result.mouse_cursor_type;
+            linuxvars.received_new_clipboard = false;
+            
+            input.first_step = first_step;
+            input.dt = frame_useconds/1000000.f; // variable?
+            input.events = linuxvars.input.trans.event_list;
+            input.trying_to_kill = linuxvars.input.trans.trying_to_kill;
+            
+            input.mouse.out_of_window = linuxvars.input.pers.mouse_out_of_window;
+            input.mouse.p = linuxvars.input.pers.mouse;
+            input.mouse.l = linuxvars.input.pers.mouse_l;
+            input.mouse.r = linuxvars.input.pers.mouse_r;
+            input.mouse.press_l = linuxvars.input.trans.mouse_l_press;
+            input.mouse.release_l = linuxvars.input.trans.mouse_l_release;
+            input.mouse.press_r = linuxvars.input.trans.mouse_r_press;
+            input.mouse.release_r = linuxvars.input.trans.mouse_r_release;
+            input.mouse.wheel = linuxvars.input.trans.mouse_wheel;
+            
+            // NOTE(allen): Application Core Update
+            Application_Step_Result result = {};
+            if (app.step != 0){
+                result = app.step(&linuxvars.tctx, &render_target, base_ptr, &input);
+            }
+            
+            // NOTE(allen): Finish the Loop
+            if (result.perform_kill){
+                GlobalRunning = false;
+                break;
+            }
+            
+#if 0
+            // NOTE(NAME): Switch to New Title
+            if (result.has_new_title){
+                XStoreName(linuxvars.X11.dpy, linuxvars.X11.win, result.title_string);
+            }
+            
+            // NOTE(allen): Switch to New Cursor
+            if (result.mouse_cursor_type != linuxvars.cursor && !linuxvars.input.pers.mouse_l){
+                XCursor c = linuxvars.X11.xcursors[result.mouse_cursor_type];
+                if (linuxvars.cursor_show){
+                    XDefineCursor(linuxvars.X11.dpy, linuxvars.X11.win, c);
+                }
+                linuxvars.cursor = result.mouse_cursor_type;
+            }
+#endif
+            
+            // NOTE(allen): Switch to New Cursor
+            if (result.mouse_cursor_type != linuxvars.cursor && !linuxvars.input.pers.mouse_l)
+            {
+                u32 Shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_DEFAULT;
+                switch(result.mouse_cursor_type)
+                {
+                    case APP_MOUSE_CURSOR_IBEAM:
+                    {
+                        Shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_TEXT;
+                    } break;
+                    
+                    case APP_MOUSE_CURSOR_LEFTRIGHT:
+                    {
+                        Shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_EW_RESIZE;
+                    } break;
+                    
+                    case APP_MOUSE_CURSOR_UPDOWN:
+                    {
+                        Shape = WP_CURSOR_SHAPE_DEVICE_V1_SHAPE_NS_RESIZE;
+                    } break;
+                }
+                
+                wp_cursor_shape_device_v1_set_shape(linuxvars.Wayland.CursorShapeDevice, linuxvars.Wayland.LastPointerEnterSerial, Shape);
+                linuxvars.cursor = result.mouse_cursor_type;
+            }
+            
+            gl_render(&render_target);
+            
+            linuxvars.Wayland.FrameCallback = wl_surface_frame(linuxvars.Wayland.Surface);
+            wl_callback_add_listener(linuxvars.Wayland.FrameCallback, &linuxvars.Wayland.FrameCallbackListener, 0);
+            eglSwapBuffers(linuxvars.EGL.Display, linuxvars.EGL.Surface);
+            linuxvars.Wayland.WaitingForPresent = true;
+            
+            // TODO(allen): don't let the screen size change until HERE after the render
+            
+            // NOTE(allen): Schedule a step if necessary
+            if (result.animating){
+                linux_schedule_step();
+            }
+            
+            first_step = false;
+            
+            linalloc_clear(&linuxvars.frame_arena);
+            block_zero_struct(&linuxvars.input.trans);
         }
-        
-        gl_render(&render_target);
-        eglSwapBuffers(linuxvars.egl.display, linuxvars.egl.surface);
-        
-        // TODO(allen): don't let the screen size change until HERE after the render
-        
-        // NOTE(allen): Schedule a step if necessary
-        if (result.animating){
-            linux_schedule_step();
-        }
-        
-        first_step = false;
-        
-        linalloc_clear(&linuxvars.frame_arena);
-        block_zero_struct(&linuxvars.input.trans);
     }
+    
+    system_thread_join(linuxvars.audio_thread);
     
     return 0;
 }

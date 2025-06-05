@@ -520,19 +520,36 @@ system_open_color_picker(Color_Picker* picker){
 internal f32
 system_get_screen_scale_factor(void){
     LINUX_FN_DEBUG();
+#if 0
     // TODO: correct screen number somehow
-    int dpi = linux_get_xsettings_dpi(linuxvars.dpy, 0);
+    int dpi = linux_get_xsettings_dpi(linuxvars.X11.dpy, 0);
     if(dpi == -1){
-        int scr = DefaultScreen(linuxvars.dpy);
-        int dw = DisplayWidth(linuxvars.dpy, scr);
-        int dh = DisplayHeight(linuxvars.dpy, scr);
-        int dw_mm = DisplayWidthMM(linuxvars.dpy, scr);
-        int dh_mm = DisplayHeightMM(linuxvars.dpy, scr);
+        XrmInitialize();
+        char *ResourceString = XResourceManagerString(linuxvars.X11.dpy);
+        XrmDatabase Database = XrmGetStringDatabase(ResourceString);
+        if(ResourceString){
+            XrmValue Value = {};
+            char *Type = 0;
+            if(XrmGetResource(Database, "Xft.dpi", "String", &Type, &Value)){
+                dpi = atoi(Value.addr);
+            }
+        }
+    }
+    if(dpi == -1){
+        int scr = DefaultScreen(linuxvars.X11.dpy);
+        int dw = DisplayWidth(linuxvars.X11.dpy, scr);
+        int dh = DisplayHeight(linuxvars.X11.dpy, scr);
+        int dw_mm = DisplayWidthMM(linuxvars.X11.dpy, scr);
+        int dh_mm = DisplayHeightMM(linuxvars.X11.dpy, scr);
         int dpi_x = dw_mm ? dw / (dw_mm / 25.4) : 96;
         int dpi_y = dh_mm ? dh / (dh_mm / 25.4) : 96;
         dpi = dpi_x > dpi_y ? dpi_x : dpi_y;
     }
     return dpi / 96.0f;
+#else
+    f32 Scale = linuxvars.Wayland.Scale;
+    return Scale;
+#endif
 }
 
 internal System_Thread
@@ -771,19 +788,33 @@ system_show_mouse_cursor(i32 show){
     linuxvars.cursor_show = show;
     
     XDefineCursor(
-                  linuxvars.dpy,
-                  linuxvars.win,
-                  show ? None : linuxvars.hidden_cursor);
+                  linuxvars.X11.dpy,
+                  linuxvars.X11.win,
+                  show ? None : linuxvars.X11.hidden_cursor);
 }
 
 internal b32
 system_set_fullscreen(b32 full_screen){
+#if 0
     linux_window_fullscreen(full_screen ? WM_STATE_ADD : WM_STATE_DEL);
+#else
+    if(full_screen)
+    {
+        xdg_toplevel_set_fullscreen(linuxvars.Wayland.ShellToplevel, 0);
+    }
+    else
+    {
+        xdg_toplevel_unset_fullscreen(linuxvars.Wayland.ShellToplevel);
+    }
+#endif
     return true;
 }
 
 internal b32
 system_is_fullscreen(void){
+    
+    return linuxvars.Wayland.IsFullscreen;
+    
     b32 result = 0;
     
     // NOTE(inso): This will get the "true" state of fullscreen,
@@ -793,15 +824,15 @@ system_is_fullscreen(void){
     Atom type, *prop;
     unsigned long nitems, pad;
     int fmt;
-    int ret = XGetWindowProperty(linuxvars.dpy,
-                                 linuxvars.win,
-                                 linuxvars.atom__NET_WM_STATE,
+    int ret = XGetWindowProperty(linuxvars.X11.dpy,
+                                 linuxvars.X11.win,
+                                 linuxvars.X11.atom__NET_WM_STATE,
                                  0, 32, False, XA_ATOM,
                                  &type, &fmt, &nitems, &pad,
                                  (unsigned char**)&prop);
     
     if(ret == Success && prop){
-        result = *prop == linuxvars.atom__NET_WM_STATE_FULLSCREEN;
+        result = *prop == linuxvars.X11.atom__NET_WM_STATE_FULLSCREEN;
         XFree((unsigned char*)prop);
     }
     

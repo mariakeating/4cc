@@ -316,6 +316,7 @@ build(Arena *arena, u32 flags, u32 arch, char *code_path, char **code_files, cha
 
 # define GCC_OPTS                      \
 "-Wno-write-strings "                 \
+"-Wno-attributes "                 \
 "-D_GNU_SOURCE -fPIC "                \
 "-fno-threadsafe-statics -pthread "   \
 "-Wno-unused-result "                 \
@@ -323,7 +324,7 @@ build(Arena *arena, u32 flags, u32 arch, char *code_path, char **code_files, cha
 
 # define GCC_LIBS_COMMON       \
 "-lX11 -lpthread -lm -lrt "   \
-"-lGL -lEGL -ldl -lXfixes -lfreetype -lfontconfig"
+"-lGL -lEGL -ldl -lXfixes -lfreetype -lfontconfig -lwayland-client -lwayland-egl -lxkbcommon"
 
 # define GCC_LIBS_X64 GCC_LIBS_COMMON
 # define GCC_LIBS_X86 GCC_LIBS_COMMON
