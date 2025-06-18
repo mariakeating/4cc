@@ -2627,6 +2627,8 @@ int
 main(int argc, char **argv){
     // NOTE(allen): fucking bullshit. someone get my shit togeth :(er
     
+    signal(SIGPIPE, SIG_IGN);
+
     for (i32 i = 0; i < argc; i += 1){
         String_Const_u8 arg = SCu8(argv[i]);
         if (string_match(arg, str8_lit("-L"))){
@@ -2909,7 +2911,6 @@ main(int argc, char **argv){
             // NOTE(allen): Finish the Loop
             if (result.perform_kill){
                 GlobalRunning = false;
-                break;
             }
             
 #if 0
@@ -2956,8 +2957,8 @@ main(int argc, char **argv){
             
             gl_render(&render_target);
             
-            linuxvars.Wayland.FrameCallback = wl_surface_frame(linuxvars.Wayland.Surface);
-            wl_callback_add_listener(linuxvars.Wayland.FrameCallback, &linuxvars.Wayland.FrameCallbackListener, 0);
+            //linuxvars.Wayland.FrameCallback = wl_surface_frame(linuxvars.Wayland.Surface);
+            //wl_callback_add_listener(linuxvars.Wayland.FrameCallback, &linuxvars.Wayland.FrameCallbackListener, 0);
             eglSwapBuffers(linuxvars.EGL.Display, linuxvars.EGL.Surface);
             linuxvars.Wayland.WaitingForPresent = true;
             
